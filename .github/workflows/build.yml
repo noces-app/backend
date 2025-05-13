@@ -11,6 +11,7 @@ env:
 
 jobs:
   get-version:
+    name: Get Version
     runs-on: ubuntu-24.04
     outputs:
       version: ${{ steps.get_version.outputs.version }}
@@ -27,6 +28,7 @@ jobs:
           echo "version=$version" >> $GITHUB_OUTPUT
 
   build:
+    name: Build Docker Image
     needs: get-version
     runs-on: ubuntu-24.04
     permissions:
@@ -72,6 +74,7 @@ jobs:
           cache-to: type=gha,mode=max
 
   create-release:
+    name: Create Release
     needs: [get-version, build]
     runs-on: ubuntu-24.04
     permissions:
