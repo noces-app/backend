@@ -1,11 +1,11 @@
 import { Injectable, UnauthorizedException, Logger } from '@nestjs/common';
 import { JwtService } from '@nestjs/jwt';
 import { ConfigService } from '@nestjs/config';
-import axios from 'axios';
-import * as qs from 'qs';
+import { TokenSet } from 'openid-client';
 import { UsersService } from '../users/users.service';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 import { User } from '../common/interfaces/user.interface';
+import { OidcService } from './oidc.service';
 
 @Injectable()
 export class AuthService {
@@ -15,59 +15,69 @@ export class AuthService {
     private readonly jwtService: JwtService,
     private readonly configService: ConfigService,
     private readonly usersService: UsersService,
+    private readonly oidcService: OidcService,
   ) {}
 
   /**
-   * Authenticate a user with Keycloak
+   * Get login URL for client redirect
    */
-  async login(username: string, password: string) {
+  getLoginUrl(sessionId: string): {
+    url: string;
+    state: string;
+    nonce: string;
+  } {
+    const state = this.oidcService.generateState();
+    const nonce = this.oidcService.generateNonce();
+    const url = this.oidcService.getAuthorizationUrl(state, nonce);
+
+    return { url, state, nonce };
+  }
+
+  /**
+   * Handle OIDC callback
+   */
+  async handleCallback(
+    code: string,
+    state: string,
+    savedState: string,
+    nonce: string,
+  ): Promise<{ accessToken: string; user: any }> {
     try {
-      // Exchange credentials for Keycloak token
-      const tokenEndpoint = `${this.configService.get<string>('keycloak.url')}/realms/${this.configService.get<string>('keycloak.realm')}/protocol/openid-connect/token`;
+      // Exchange code for tokens
+      const tokenSet = await this.oidcService.handleCallback(
+        code,
+        state,
+        savedState,
+        nonce,
+      );
 
-      const data = qs.stringify({
-        grant_type: 'password',
-        client_id: this.configService.get<string>('keycloak.clientId'),
-        client_secret: this.configService.get<string>('keycloak.clientSecret'),
-        username,
-        password,
-      });
-
-      const response = await axios.post(tokenEndpoint, data, {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-      });
-
-      const { access_token, refresh_token, expires_in } = response.data;
-
-      // Decode the token to get user info
-      const decodedToken: any = this.jwtService.decode(access_token);
+      // Get user info
+      const userInfo = await this.oidcService.getUserInfo(
+        tokenSet.access_token || '',
+      );
 
       // Get or create user in our database
-      let user = await this.usersService.findByEmail(decodedToken.email);
+      let user = await this.usersService.findByEmail(userInfo.email);
 
       if (!user) {
         user = await this.usersService.create({
-          email: decodedToken.email,
-          firstName: decodedToken.given_name,
-          lastName: decodedToken.family_name,
-          roles: decodedToken.realm_access.roles,
-          keycloakId: decodedToken.sub,
+          email: userInfo.email,
+          firstName: userInfo.given_name,
+          lastName: userInfo.family_name,
+          roles: userInfo.realm_access?.roles || ['user'],
+          keycloakId: userInfo.sub,
         });
       }
 
-      // Create our own JWT
+      // Create our own JWT for API access
       const payload: JwtPayload = {
-        sub: user._id.toString(),
+        sub: (user._id as string).toString(),
         email: user.email,
         roles: user.roles,
       };
 
       return {
         accessToken: this.jwtService.sign(payload),
-        refreshToken: refresh_token,
-        expiresIn: expires_in,
         user: {
           id: user._id,
           email: user.email,
@@ -77,58 +87,8 @@ export class AuthService {
         },
       };
     } catch (error) {
-      this.logger.error('Authentication failed', error);
-      throw new UnauthorizedException('Invalid credentials');
-    }
-  }
-
-  /**
-   * Refresh an access token using a refresh token
-   */
-  async refreshToken(refreshToken: string) {
-    try {
-      const tokenEndpoint = `${this.configService.get<string>('keycloak.url')}/realms/${this.configService.get<string>('keycloak.realm')}/protocol/openid-connect/token`;
-
-      const data = qs.stringify({
-        grant_type: 'refresh_token',
-        client_id: this.configService.get<string>('keycloak.clientId'),
-        client_secret: this.configService.get<string>('keycloak.clientSecret'),
-        refresh_token: refreshToken,
-      });
-
-      const response = await axios.post(tokenEndpoint, data, {
-        headers: {
-          'Content-Type': 'application/x-www-form-urlencoded',
-        },
-      });
-
-      const { access_token, refresh_token, expires_in } = response.data;
-
-      // Decode the token to get user info
-      const decodedToken: any = this.jwtService.decode(access_token);
-
-      // Get user from our database
-      const user = await this.usersService.findByEmail(decodedToken.email);
-
-      if (!user) {
-        throw new UnauthorizedException('User not found');
-      }
-
-      // Create our own JWT
-      const payload: JwtPayload = {
-        sub: user._id.toString(),
-        email: user.email,
-        roles: user.roles,
-      };
-
-      return {
-        accessToken: this.jwtService.sign(payload),
-        refreshToken: refresh_token,
-        expiresIn: expires_in,
-      };
-    } catch (error) {
-      this.logger.error('Token refresh failed', error);
-      throw new UnauthorizedException('Invalid refresh token');
+      this.logger.error('Authentication callback failed', error);
+      throw new UnauthorizedException('Authentication failed');
     }
   }
 
@@ -142,36 +102,22 @@ export class AuthService {
       throw new UnauthorizedException('User not found');
     }
 
-    return user;
+    return {
+      id: user._id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      roles: user.roles,
+      keycloakId: user.keycloakId,
+      createdAt: new Date(),
+      updatedAt: new Date(),
+    } as User;
   }
 
   /**
-   * Logout a user
+   * Get logout URL
    */
-  async logout(token: string) {
-    try {
-      const logoutEndpoint = `${this.configService.get<string>('keycloak.url')}/realms/${this.configService.get<string>('keycloak.realm')}/protocol/openid-connect/logout`;
-
-      await axios.post(
-        logoutEndpoint,
-        qs.stringify({
-          client_id: this.configService.get<string>('keycloak.clientId'),
-          client_secret: this.configService.get<string>(
-            'keycloak.clientSecret',
-          ),
-          refresh_token: token,
-        }),
-        {
-          headers: {
-            'Content-Type': 'application/x-www-form-urlencoded',
-          },
-        },
-      );
-
-      return { message: 'Logout successful' };
-    } catch (error) {
-      this.logger.error('Logout failed', error);
-      return { message: 'Logout successful' }; // Return success anyway to client
-    }
+  getLogoutUrl(idToken: string): string {
+    return this.oidcService.getEndSessionUrl(idToken);
   }
 }

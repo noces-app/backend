@@ -1,69 +1,120 @@
 import {
   Controller,
-  Post,
-  Body,
   Get,
   UseGuards,
-  HttpCode,
-  HttpStatus,
+  Req,
+  Res,
+  Query,
+  UnauthorizedException,
+  Session,
 } from '@nestjs/common';
+import { ApiTags, ApiOperation, ApiResponse } from '@nestjs/swagger';
+import { Response, Request } from 'express';
+import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
-import { LoginDto } from './dto/login.dto';
-import { RefreshTokenDto } from './dto/refresh-token.dto';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
-import {
-  ApiTags,
-  ApiOperation,
-  ApiResponse,
-  ApiBearerAuth,
-} from '@nestjs/swagger';
 import { User } from '../common/decorators/user.decorator';
-import { User as UserInterface } from '../common/interfaces/user.interface';
 
 @ApiTags('auth')
 @Controller('auth')
 export class AuthController {
-  constructor(private readonly authService: AuthService) {}
+  constructor(
+    private readonly authService: AuthService,
+    private readonly configService: ConfigService,
+  ) {}
 
-  @Post('login')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Login with username and password' })
-  @ApiResponse({ status: 200, description: 'Login successful' })
-  @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async login(@Body() loginDto: LoginDto) {
-    return this.authService.login(loginDto.username, loginDto.password);
+  @Get('login')
+  @ApiOperation({ summary: 'Start OIDC login flow' })
+  @ApiResponse({ status: 302, description: 'Redirect to OIDC provider' })
+  login(@Session() session: Record<string, any>, @Res() res: Response) {
+    const { url, state, nonce } = this.authService.getLoginUrl(session.id);
+
+    // Store state and nonce in session for verification during callback
+    session.oidc = { state, nonce };
+
+    // Redirect to Keycloak login page
+    return res.redirect(url);
   }
 
-  @Post('refresh-token')
-  @HttpCode(HttpStatus.OK)
-  @ApiOperation({ summary: 'Refresh access token' })
-  @ApiResponse({ status: 200, description: 'Token refresh successful' })
-  @ApiResponse({ status: 401, description: 'Invalid refresh token' })
-  async refreshToken(@Body() refreshTokenDto: RefreshTokenDto) {
-    return this.authService.refreshToken(refreshTokenDto.refreshToken);
+  @Get('callback')
+  @ApiOperation({ summary: 'Handle OIDC callback' })
+  @ApiResponse({ status: 302, description: 'Redirect to frontend with token' })
+  async callback(
+    @Query('code') code: string,
+    @Query('state') state: string,
+    @Session()
+    session: {
+      id: string;
+      oidc?: { state: string; nonce: string };
+      jwt?: string;
+    },
+    @Res() res: Response,
+  ) {
+    try {
+      if (!session.oidc) {
+        throw new UnauthorizedException('Invalid session');
+      }
+
+      const { state: savedState, nonce } = session.oidc;
+
+      const result = await this.authService.handleCallback(
+        code,
+        state,
+        savedState,
+        nonce,
+      );
+
+      // Clear OIDC data from session
+      delete session.oidc;
+
+      // Store the access token in session
+      session.jwt = result.accessToken;
+
+      // Redirect to frontend with success flag
+      const clientUrl = this.configService.get<string>('clientUrl');
+      return res.redirect(`${clientUrl}/auth/callback?success=true`);
+    } catch (error) {
+      const clientUrl = this.configService.get<string>('clientUrl');
+      return res.redirect(
+        `${clientUrl}/auth/callback?success=false&error=${encodeURIComponent(error.message)}`,
+      );
+    }
   }
 
-  @Post('logout')
-  @HttpCode(HttpStatus.OK)
+  @Get('logout')
   @ApiOperation({ summary: 'Logout' })
-  @ApiResponse({ status: 200, description: 'Logout successful' })
-  async logout(@Body() logoutDto: RefreshTokenDto) {
-    return this.authService.logout(logoutDto.refreshToken);
+  @ApiResponse({ status: 302, description: 'Redirect to OIDC provider logout' })
+  logout(@Session() session: any, @Res() res: Response) {
+    // Clear session
+    session.destroy();
+
+    // Redirect to frontend
+    const clientUrl = this.configService.get<string>('clientUrl');
+    return res.redirect(clientUrl || '/');
   }
 
   @Get('profile')
   @UseGuards(JwtAuthGuard)
-  @ApiBearerAuth()
   @ApiOperation({ summary: 'Get current user profile' })
   @ApiResponse({ status: 200, description: 'Profile data' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async getProfile(@User() user: UserInterface) {
+  async getProfile(@User() user: any) {
     return {
       id: user._id,
       email: user.email,
       firstName: user.firstName,
       lastName: user.lastName,
       roles: user.roles,
+    };
+  }
+
+  @Get('session')
+  @ApiOperation({ summary: 'Get session info' })
+  @ApiResponse({ status: 200, description: 'Session info' })
+  async getSession(@Session() session: any, @Req() req: Request) {
+    return {
+      isAuthenticated: !!session.jwt,
+      sessionId: session.id,
     };
   }
 }
