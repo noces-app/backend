@@ -8,19 +8,21 @@ export default () => ({
     uri: process.env.MONGODB_URI,
   },
 
-  // Keycloak
-  keycloak: {
-    url: process.env.KEYCLOAK_URL,
-    realm: process.env.KEYCLOAK_REALM,
-    clientId: process.env.KEYCLOAK_CLIENT_ID,
-    clientSecret: process.env.KEYCLOAK_CLIENT_SECRET,
-    publicKey: process.env.KEYCLOAK_PUBLIC_KEY,
+  // OpenID Connect (OIDC)
+  oidc: {
+    issuer: process.env.OIDC_ISSUER,
+    clientId: process.env.OIDC_CLIENT_ID,
+    clientSecret: process.env.OIDC_CLIENT_SECRET,
+    redirectUri: process.env.OIDC_REDIRECT_URI,
+    postLogoutRedirectUri: process.env.OIDC_POST_LOGOUT_REDIRECT_URI,
+    scope: process.env.OIDC_SCOPE || 'openid profile email',
   },
 
-  // JWT
-  jwt: {
-    secret: process.env.JWT_SECRET,
-    expiresIn: process.env.JWT_EXPIRATION || '1h',
+  // Session & Cookie settings
+  session: {
+    secret: process.env.SESSION_SECRET,
+    cookieName: process.env.COOKIE_NAME || 'session.token',
+    cookieMaxAge: parseInt(process.env.COOKIE_MAX_AGE || '86400000', 10),
   },
 
   // Stripe
