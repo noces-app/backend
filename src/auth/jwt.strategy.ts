@@ -3,20 +3,20 @@ import { PassportStrategy } from '@nestjs/passport';
 import { ExtractJwt, Strategy } from 'passport-jwt';
 import { ConfigService } from '@nestjs/config';
 import { Request } from 'express';
-import { AuthService } from './auth.service';
-import { JwtPayload } from 'src/common/interfaces/jwt-payload.interface';
+import { UsersService } from '../users/users.service';
+import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
 
 @Injectable()
 export class JwtStrategy extends PassportStrategy(Strategy) {
   constructor(
     private readonly configService: ConfigService,
-    private readonly authService: AuthService,
+    private readonly usersService: UsersService,
   ) {
     super({
       jwtFromRequest: ExtractJwt.fromExtractors([
         ExtractJwt.fromAuthHeaderAsBearerToken(),
         (request: Request) => {
-          return request.session?.jwt;
+          return (request.session as any).jwt;
         },
       ]),
       ignoreExpiration: false,
@@ -27,7 +27,12 @@ export class JwtStrategy extends PassportStrategy(Strategy) {
   async validate(payload: JwtPayload) {
     try {
       // Check if user exists in our system
-      const user = await this.authService.validateUser(payload);
+      const user = await this.usersService.findById(payload.sub);
+
+      if (!user) {
+        throw new UnauthorizedException('User not found');
+      }
+
       return user;
     } catch (error) {
       throw new UnauthorizedException('Invalid token');

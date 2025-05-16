@@ -4,8 +4,8 @@ import { ConfigService } from '@nestjs/config';
 import { TokenSet } from 'openid-client';
 import { UsersService } from '../users/users.service';
 import { JwtPayload } from '../common/interfaces/jwt-payload.interface';
-import { User } from '../common/interfaces/user.interface';
 import { OidcService } from './oidc.service';
+import { UserInterface } from 'src/common/interfaces/user.interface';
 
 @Injectable()
 export class AuthService {
@@ -53,25 +53,26 @@ export class AuthService {
 
       // Get user info
       const userInfo = await this.oidcService.getUserInfo(
-        tokenSet.access_token || '',
+        tokenSet.access_token!,
       );
 
       // Get or create user in our database
-      let user = await this.usersService.findByEmail(userInfo.email);
+      const userData = {
+        email: userInfo.email,
+        firstName: userInfo.given_name || userInfo.name?.split(' ')[0] || '',
+        lastName:
+          userInfo.family_name ||
+          userInfo.name?.split(' ').slice(1).join(' ') ||
+          '',
+        roles: userInfo.realm_access?.roles || ['user'],
+        keycloakId: userInfo.sub,
+      };
 
-      if (!user) {
-        user = await this.usersService.create({
-          email: userInfo.email,
-          firstName: userInfo.given_name,
-          lastName: userInfo.family_name,
-          roles: userInfo.realm_access?.roles || ['user'],
-          keycloakId: userInfo.sub,
-        });
-      }
+      const user = await this.usersService.createOrUpdateUser(userData);
 
       // Create our own JWT for API access
       const payload: JwtPayload = {
-        sub: (user._id as string).toString(),
+        sub: user._id as string,
         email: user.email,
         roles: user.roles,
       };
@@ -87,31 +88,9 @@ export class AuthService {
         },
       };
     } catch (error) {
-      this.logger.error('Authentication callback failed', error);
+      this.logger.error('Authentication callback failed', error.stack);
       throw new UnauthorizedException('Authentication failed');
     }
-  }
-
-  /**
-   * Validate a user from a JWT payload
-   */
-  async validateUser(payload: JwtPayload): Promise<User> {
-    const user = await this.usersService.findById(payload.sub);
-
-    if (!user) {
-      throw new UnauthorizedException('User not found');
-    }
-
-    return {
-      id: user._id,
-      email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      roles: user.roles,
-      keycloakId: user.keycloakId,
-      createdAt: new Date(),
-      updatedAt: new Date(),
-    } as User;
   }
 
   /**
@@ -119,5 +98,18 @@ export class AuthService {
    */
   getLogoutUrl(idToken: string): string {
     return this.oidcService.getEndSessionUrl(idToken);
+  }
+
+  /**
+   * Get user profile
+   */
+  getUserProfile(user: any) {
+    return {
+      id: user._id,
+      email: user.email,
+      firstName: user.firstName,
+      lastName: user.lastName,
+      roles: user.roles,
+    };
   }
 }

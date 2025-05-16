@@ -5,7 +5,6 @@ import { ConfigModule, ConfigService } from '@nestjs/config';
 import { AuthController } from './auth.controller';
 import { AuthService } from './auth.service';
 import { UsersModule } from '../users/users.module';
-import { OidcStrategy } from './strategies/oidc.strategy.ts';
 import { JwtStrategy } from './jwt.strategy';
 import { OidcService } from './oidc.service';
 
@@ -28,7 +27,7 @@ import { OidcService } from './oidc.service';
     UsersModule,
   ],
   controllers: [AuthController],
-  providers: [AuthService, OidcService, OidcStrategy, JwtStrategy],
+  providers: [AuthService, OidcService, JwtStrategy],
   exports: [AuthService, JwtStrategy, PassportModule],
 })
 export class AuthModule {}

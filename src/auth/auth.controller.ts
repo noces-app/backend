@@ -13,7 +13,8 @@ import { Response, Request } from 'express';
 import { ConfigService } from '@nestjs/config';
 import { AuthService } from './auth.service';
 import { JwtAuthGuard } from './guards/jwt-auth.guard';
-import { User } from '../common/decorators/user.decorator';
+import { UserDecorator } from '../common/decorators/user.decorator';
+import { UserInterface } from 'src/common/interfaces/user.interface';
 
 @ApiTags('auth')
 @Controller('auth')
@@ -32,7 +33,7 @@ export class AuthController {
     // Store state and nonce in session for verification during callback
     session.oidc = { state, nonce };
 
-    // Redirect to Keycloak login page
+    // Redirect to Identity Provider login page
     return res.redirect(url);
   }
 
@@ -98,14 +99,8 @@ export class AuthController {
   @ApiOperation({ summary: 'Get current user profile' })
   @ApiResponse({ status: 200, description: 'Profile data' })
   @ApiResponse({ status: 401, description: 'Unauthorized' })
-  async getProfile(@User() user: any) {
-    return {
-      id: user._id,
-      email: user.email,
-      firstName: user.firstName,
-      lastName: user.lastName,
-      roles: user.roles,
-    };
+  async getProfile(@UserDecorator() user: UserInterface) {
+    return this.authService.getUserProfile(user);
   }
 
   @Get('session')
