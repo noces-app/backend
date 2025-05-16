@@ -2,9 +2,6 @@ import { Injectable, NotFoundException } from '@nestjs/common';
 import { InjectModel } from '@nestjs/mongoose';
 import { Model } from 'mongoose';
 import { User } from './schemas/user.schema';
-import { CreateUserDto } from './dto/create-user.dto';
-import { UpdateUserDto } from './dto/update-user.dto';
-import { PaginationQueryDto } from '../common/dto/pagination-query.dto';
 
 @Injectable()
 export class UsersService {
@@ -13,37 +10,47 @@ export class UsersService {
   ) {}
 
   /**
-   * Create a new user
+   * Create a new user or update if exists by keycloakId
    */
-  async create(createUserDto: CreateUserDto): Promise<User> {
-    const newUser = new this.userModel(createUserDto);
+  async createOrUpdateUser(userData: {
+    email: string;
+    firstName: string;
+    lastName: string;
+    roles: string[];
+    keycloakId: string;
+  }): Promise<User> {
+    // Check if user with this keycloakId already exists
+    const existingUser = await this.userModel.findOne({
+      keycloakId: userData.keycloakId,
+    });
+
+    if (existingUser) {
+      // Update existing user
+      existingUser.email = userData.email;
+      existingUser.firstName = userData.firstName;
+      existingUser.lastName = userData.lastName;
+      existingUser.roles = userData.roles;
+      return existingUser.save();
+    }
+
+    // Check if user with this email exists but without keycloakId
+    const existingUserByEmail = await this.userModel.findOne({
+      email: userData.email,
+      keycloakId: { $exists: false },
+    });
+
+    if (existingUserByEmail) {
+      // Update existing user with keycloakId
+      existingUserByEmail.keycloakId = userData.keycloakId;
+      existingUserByEmail.firstName = userData.firstName;
+      existingUserByEmail.lastName = userData.lastName;
+      existingUserByEmail.roles = userData.roles;
+      return existingUserByEmail.save();
+    }
+
+    // Create new user
+    const newUser = new this.userModel(userData);
     return newUser.save();
-  }
-
-  /**
-   * Find all users with pagination
-   */
-  async findAll(paginationQuery: PaginationQueryDto) {
-    const { limit, page, sort, order } = paginationQuery;
-    const skip = (page - 1) * limit;
-
-    const sortOptions =
-      sort && order ? { [sort]: order === 'asc' ? 1 : -1 } : { createdAt: -1 };
-
-    const [items, total] = await Promise.all([
-      this.userModel.find().sort(sortOptions).skip(skip).limit(limit).exec(),
-      this.userModel.countDocuments().exec(),
-    ]);
-
-    return {
-      items,
-      meta: {
-        total,
-        page,
-        limit,
-        pages: Math.ceil(total / limit),
-      },
-    };
   }
 
   /**
@@ -71,31 +78,5 @@ export class UsersService {
    */
   async findByKeycloakId(keycloakId: string): Promise<User | null> {
     return this.userModel.findOne({ keycloakId }).exec();
-  }
-
-  /**
-   * Update a user
-   */
-  async update(id: string, updateUserDto: UpdateUserDto): Promise<User> {
-    const user = await this.userModel
-      .findByIdAndUpdate(id, updateUserDto, { new: true })
-      .exec();
-
-    if (!user) {
-      throw new NotFoundException(`User with ID ${id} not found`);
-    }
-
-    return user;
-  }
-
-  /**
-   * Delete a user
-   */
-  async remove(id: string): Promise<void> {
-    const result = await this.userModel.deleteOne({ _id: id }).exec();
-
-    if (result.deletedCount === 0) {
-      throw new NotFoundException(`User with ID ${id} not found`);
-    }
   }
 }
