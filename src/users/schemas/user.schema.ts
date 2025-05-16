@@ -20,7 +20,3 @@ export class User extends Document {
 }
 
 export const UserSchema = SchemaFactory.createForClass(User);
-
-// Add indexes
-UserSchema.index({ email: 1 });
-UserSchema.index({ keycloakId: 1 });
