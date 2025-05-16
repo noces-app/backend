@@ -22,7 +22,7 @@ async function bootstrap() {
   // Setup session
   app.use(
     session({
-      secret: configService.get<string>('session.secret'),
+      secret: configService.get<string>('session.secret')!,
       resave: false,
       saveUninitialized: false,
       cookie: {
