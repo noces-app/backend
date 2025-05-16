@@ -5,7 +5,7 @@ import { ApiProperty } from '@nestjs/swagger';
 export class PaginationQueryDto {
   @ApiProperty({
     description: 'Number of items per page',
-    default: 10,
+    default: 25,
     required: false,
   })
   @IsOptional()
